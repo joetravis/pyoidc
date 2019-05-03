@@ -419,7 +419,7 @@ class TestSessionDB(object):
         assert ae.valid_until == 1500
 
     def test_get_sids_from_uid_distributed(self):
-        db = {}
+        db = {}  # type: ignore
         sdb1 = create_session_db("https://example.com/1", "secret", "password", db=db)
         sdb2 = create_session_db("https://example.com/2", "secret", "password", db=db)
         ae = AuthnEvent("sub", "salt", time_stamp=time.time())
@@ -430,6 +430,7 @@ class TestSessionDB(object):
         sdb1sids = sdb1.get_sids_from_uid("sub")
         sdb2sids = sdb2.get_sids_from_uid("sub")
         assert sdb1sids == sdb2sids
+
 
 class TestCrypt(object):
     @pytest.fixture(autouse=True)

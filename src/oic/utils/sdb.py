@@ -427,7 +427,14 @@ class SessionDB(object):
         code_factory=None,
         refresh_token_factory=None,
     ):
+        """
+        Object to store the session related information.
 
+        :param db: Database for storing the session information.
+                   There are two possible insertions:
+                        session_id: session_info -> session information based on session_id
+                        uid: session_id -> reverse mapping for faster lookup
+        """
         self.base_url = base_url
         self._db = db
 
@@ -519,6 +526,13 @@ class SessionDB(object):
 
         :param sid: session identifier
         """
+        session = self._db[sid]
+        # Drop the reverse lookups as well
+        if session["sub"] in self._db:
+            del self._db[session["sub"]]
+        uid = AuthnEvent.from_json(session["authn_event"]).uid
+        if uid in self._db:
+            del self._db[uid]
         del self._db[sid]
 
     def update(self, key, attribute, value):
@@ -561,6 +575,11 @@ class SessionDB(object):
         else:
             sub = pairwise_id(uid, sector_id, "{}{}".format(client_salt, user_salt))
         self.update(sid, "sub", sub)
+        # Store a reverse mapping for faster lookup
+        try:
+            self._db[sub] += [sid]
+        except KeyError:
+            self._db[sub] = [sid]
 
         return sub
 
@@ -609,7 +628,11 @@ class SessionDB(object):
             _dic["oidreq"] = oidreq.to_json()
 
         self._db[sid] = _dic
-
+        # Store the reverse lookup
+        try:
+            self._db[aevent.uid] += [sid]
+        except KeyError:
+            self._db[aevent.uid] = [sid]
         return sid
 
     def get_authentication_event(self, sid):
@@ -846,7 +869,9 @@ class SessionDB(object):
         return _dict["client_id"]
 
     def get_client_ids_for_uid(self, uid):
-        return [self.get_client_id_for_session(sid) for sid in self.get_sids_from_uid(uid)]
+        return [
+            self.get_client_id_for_session(sid) for sid in self.get_sids_from_uid(uid)
+        ]
 
     def get_verified_Logout(self, uid):
         # FIXME: This can be broken if there are more `sids` for `uid`
@@ -861,13 +886,16 @@ class SessionDB(object):
         _dict["verified_logout"] = uuid.uuid4().urn
 
     def get_token_id(self, uid):
+        # FIXME: This can be broken if there are more `sids` for `uid`
         _dict = self._db[self.get_sids_from_uid(uid)]
         return _dict["id_token"]
 
     def is_revoke_uid(self, uid):
+        # FIXME: This can be broken if there are more `sids` for `uid`
         return self._db[self.get_sids_from_uid(uid)]["revoked"]
 
     def revoke_uid(self, uid):
+        # FIXME: This can be broken if there are more `sids` for `uid`
         self.update(self.get_sids_from_uid(uid), "revoked", True)
 
     def get_sids_from_uid(self, uid: str) -> List[str]:
@@ -877,10 +905,11 @@ class SessionDB(object):
         :param uid: local identifier (username)
         :return: list of session identifiers
         """
-        return [sid for sid, session in self._db.items() if AuthnEvent.from_json(session['authn_event']).uid == uid]
+        return self._db.get(uid, [])
 
-    def get_sids_by_sub(self, sub):
-        return [sid for sid in self._db.keys() if self._db[sid]["sub"] == sub]
+    def get_sids_by_sub(self, sub: str) -> List[str]:
+        """Return the list of identifiers for session that are connected to this public identifier."""
+        return self._db.get(sub, [])
 
     def duplicate(self, sinfo):
         _dic = copy.copy(sinfo)
